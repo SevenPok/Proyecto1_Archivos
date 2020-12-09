@@ -7,7 +7,10 @@ import (
 	"strings"
 
 	"./Interprete"
+	"./Structs"
 )
+
+var disco [27]Structs.Disco
 
 func main() {
 	menu()
@@ -26,10 +29,10 @@ func menu() {
 		finalizar = 1
 	} else {
 		if comando != "" {
-			Interprete.Interpreter(strings.TrimSpace(comando))
+			Interprete.Interpreter(strings.TrimSpace(comando), &disco)
 		}
 	}
-	fmt.Println("-----------------------------------------")
+
 	for finalizar != 1 {
 		fmt.Print("Enter comands: ")
 		reader := bufio.NewReader(os.Stdin)
@@ -38,9 +41,9 @@ func menu() {
 			finalizar = 1
 		} else {
 			if comando != "" {
-				Interprete.Interpreter(strings.TrimSpace(comando))
+				Interprete.Interpreter(strings.TrimSpace(comando), &disco)
 			}
 		}
-		fmt.Println("-----------------------------------------")
+
 	}
 }

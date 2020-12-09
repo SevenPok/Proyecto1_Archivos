@@ -3,59 +3,121 @@ package Interprete
 import (
 	"bufio"
 	"fmt"
+	"io/ioutil"
 	"os"
 	"strconv"
 	"strings"
 
+	"../Metodos"
 	"../Structs"
 )
 
-func Interpreter(linea string) {
+func Interpreter(linea string, disco *[27]Structs.Disco) {
+	linea = ruta(linea)
+	linea = comentario(linea)
 	comando := strings.Split(linea, " ")
 	switch ejecutar := comando[0]; strings.ToLower(ejecutar) {
 	case strings.ToLower("exec"):
 		fmt.Println("Comando RMDISK")
+		var path string = ""
+		for i := 1; i <= len(comando)-1; i++ {
+			if comando[i] != "" {
+				path = Exec(comando[i])
+			}
+		}
+		if path != "" {
+			archivo(path, disco)
+		} else {
+			fmt.Println("Se requiere de una ruta")
+		}
 	case strings.ToLower("mkdisk"):
 		fmt.Println("Comando MKDISK")
 		mkdisk := Structs.Mkdisk{}
 		for i := 1; i <= len(comando)-1; i++ {
-			Mkdisk(comando[i], &mkdisk)
+			if comando[i] != "" {
+				Mkdisk(comando[i], &mkdisk)
+			}
 		}
 		if mkdisk.Path != "" && mkdisk.Size > 0 {
-			fmt.Println("COMANDO EJECUTADO")
+			if mkdisk.Unit == 0 {
+				mkdisk.Unit = 'm'
+			}
+
+			if mkdisk.Fit == 0 {
+				mkdisk.Fit = 'W'
+			}
+			if strings.ToLower(string(mkdisk.Unit)) == "k" || strings.ToLower(string(mkdisk.Unit)) == "m" {
+				if strings.ToUpper(string(mkdisk.Fit)) == "B" || strings.ToUpper(string(mkdisk.Fit)) == "F" || strings.ToUpper(string(mkdisk.Fit)) == "W" {
+					Metodos.CreateFile(mkdisk)
+				} else {
+					fmt.Println("Ajuste no renocido")
+				}
+			} else {
+				fmt.Println("Unidades no renocidas")
+			}
+
 		} else {
 			fmt.Println("Error: Hace falta uno de los siguientes atributos obligatorios path o size")
 		}
 	case strings.ToLower("rmdisk"):
 		fmt.Println("Comando RMDISK")
-		fmt.Println(Rmdisk(comando[1]))
-
+		var pathEliminar string
+		for i := 1; i <= len(comando)-1; i++ {
+			if comando[i] != "" {
+				pathEliminar = Rmdisk(comando[i])
+			}
+		}
+		Metodos.DeleteDisk(pathEliminar, disco)
 	case strings.ToLower("fdisk"):
 		fmt.Println("Comando FDISK")
 		fdisk := Structs.Fdisk{}
 		for i := 1; i <= len(comando)-1; i++ {
-			Fdisk(comando[i], &fdisk)
+			if comando[i] != "" {
+				Fdisk(comando[i], &fdisk)
+			}
 		}
 		if fdisk.Size > 0 && fdisk.Path != "" && fdisk.Name != "" {
-			fmt.Println("COMANDO EJECUTADO")
-		} else if fdisk.Path != "" && fdisk.Name != "" {
-			fmt.Println("COMANDO EJECUTADO")
+			if fdisk.Type == 0 {
+				fdisk.Type = 'p'
+			}
+			if fdisk.Fit == 0 {
+				fdisk.Fit = 'w'
+			}
+			if fdisk.Unit == 0 {
+				fdisk.Unit = 'k'
+			}
+
+			if fdisk.Add != 0 && fdisk.Delete == "" {
+				Metodos.CreatePartition(fdisk)
+			} else if fdisk.Add == 0 && fdisk.Delete != "" {
+				//Metodos.CreatePartition(fdisk)
+			} else if fdisk.Add == 0 && fdisk.Delete == "" {
+				Metodos.CreatePartition(fdisk)
+			} else {
+				fmt.Println("Error: no se puede ejucutar add y delete al mismo tiempo")
+			}
 		} else {
 			fmt.Println("Error: Hace falta uno de los siguientes atributos obligatorios path, name o size")
 		}
 	case strings.ToLower("mount"):
 		fmt.Println("Comando MOUNT")
+		montar := Structs.Montar{}
 		if len(comando) > 1 {
 			for i := 1; i <= len(comando)-1; i++ {
-				Mount(comando[i])
+				if comando[i] != "" {
+					Mount(comando[i], &montar)
+				}
 			}
+			Metodos.Montar(montar, disco)
 		} else {
 			fmt.Println("Comando Mount solo")
 		}
 	case strings.ToLower("unmount"):
 		fmt.Println("Comando UNMOUNT")
 		for i := 1; i <= len(comando)-1; i++ {
-			Unmount(comando[i])
+			if comando[i] != "" {
+				Unmount(comando[i])
+			}
 		}
 	case strings.ToLower("pause"):
 		fmt.Println("Comando PAUSE")
@@ -67,7 +129,9 @@ func Interpreter(linea string) {
 	default:
 		fmt.Println("Comando no reconocido")
 	}
-
+	fmt.Println("-----------------------------------------")
+	mostrar(disco)
+	fmt.Println("-----------------------------------------")
 }
 
 func Exec(linea string) string {
@@ -172,15 +236,17 @@ func Fdisk(linea string, fdisk *Structs.Fdisk) {
 	}
 }
 
-func Mount(linea string) {
+func Mount(linea string, montar *Structs.Montar) {
 	comando := strings.Split(linea, "->")
 	switch ajecutar := comando[0]; strings.ToLower(ajecutar) {
 	case strings.ToLower("-path"):
 		fmt.Println("Atributo Path: " + ajecutar)
 		fmt.Println("Valor Atributo: " + strings.ReplaceAll(comando[1], "\u0022", ""))
+		montar.Path = comando[1]
 	case strings.ToLower("-name"):
 		fmt.Println("Atributo Name: " + ajecutar)
 		fmt.Println("Valor Atributo: " + strings.ReplaceAll(comando[1], "\u0022", ""))
+		montar.Name = comando[1]
 	default:
 		fmt.Println("Error: Este atributo " + ajecutar + " no existe en el comando mount")
 	}
@@ -216,4 +282,90 @@ func Mbr() {
 
 func Disk() {
 
+}
+
+func comentario(linea string) string {
+	estado := 0
+	comando := ""
+	cadenita := ""
+	caracter := ""
+	for i := 0; i < len(linea); i++ {
+		caracter = string(linea[i])
+		if estado == 0 {
+			if caracter == "#" {
+				estado = 1
+			} else {
+				comando += caracter
+			}
+		} else if estado == 1 {
+			cadenita += caracter
+		}
+	}
+	fmt.Println("COMENTARIO: ", cadenita)
+	fmt.Println(comando)
+	return comando
+}
+
+func ruta(linea string) string {
+	estado := 0
+	comando := ""
+	cadenita := ""
+	caracter := ""
+	for i := 0; i < len(linea); i++ {
+		caracter = string(linea[i])
+		if estado == 0 {
+			if caracter == "\"" {
+				cadenita += caracter
+				estado = 1
+			} else {
+				comando += caracter
+			}
+		} else if estado == 1 {
+			if caracter != "\"" {
+				if caracter == " " {
+					caracter = "_"
+				}
+				cadenita += caracter
+			} else {
+				cadenita += caracter
+				estado = 0
+				comando += cadenita
+			}
+		}
+	}
+	if estado == 0 {
+		return comando
+	} else {
+		return linea
+	}
+}
+
+func archivo(path string, disco *[27]Structs.Disco) {
+	b, err := ioutil.ReadFile(path)
+	if err != nil {
+		fmt.Print(err)
+	}
+
+	str := string(b)
+
+	fmt.Println(str)
+
+	var separarComandos []string = strings.Split(str, "\n")
+
+	for i := 0; i <= len(separarComandos)-1; i++ {
+		Interpreter(separarComandos[i], disco)
+	}
+}
+
+func mostrar(disco *[27]Structs.Disco) {
+	for i := 0; i < len(disco); i++ {
+		if disco[i].Status == 1 {
+			fmt.Println(disco[i].Path)
+			for j := 0; j < len(disco[i].Particiones); j++ {
+				if disco[i].Particiones[j].Status == 1 {
+					fmt.Println(i+1, ". Id: ", disco[i].Particiones[j].Identificador)
+				}
+			}
+		}
+	}
 }
