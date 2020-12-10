@@ -26,6 +26,7 @@ type ParticionMontada struct {
 }
 
 type Disco struct {
+	Letra       string
 	Status      byte
 	Path        string
 	Particiones [100]ParticionMontada
@@ -60,4 +61,14 @@ type Fdisk struct {
 type Montar struct {
 	Path string
 	Name string
+}
+
+type UnMount struct {
+	Identificador string
+}
+
+type Rep struct {
+	Name          string
+	Path          string
+	Identificador string
 }

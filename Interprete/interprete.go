@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -108,24 +109,41 @@ func Interpreter(linea string, disco *[27]Structs.Disco) {
 					Mount(comando[i], &montar)
 				}
 			}
-			Metodos.Montar(montar, disco)
+			if montar.Name != "" {
+				Metodos.Montar(montar, disco)
+			}
 		} else {
 			fmt.Println("Comando Mount solo")
 		}
 	case strings.ToLower("unmount"):
 		fmt.Println("Comando UNMOUNT")
+		unMount := Structs.UnMount{}
 		for i := 1; i <= len(comando)-1; i++ {
 			if comando[i] != "" {
-				Unmount(comando[i])
+				Unmount(comando[i], &unMount)
 			}
+		}
+		if unMount.Identificador != "" {
+			Metodos.Desmontar(unMount.Identificador, disco)
+		} else {
+			fmt.Println("No ingreso id")
 		}
 	case strings.ToLower("pause"):
 		fmt.Println("Comando PAUSE")
 		fmt.Println("Presione cualquie letra para continuar...")
 		bufio.NewReader(os.Stdin).ReadBytes('\n')
 	case strings.ToLower("rep"):
-	case strings.ToLower("mbr"):
-	case strings.ToLower("disk"):
+		fmt.Println("Comando REP")
+		rep := Structs.Rep{}
+		for i := 1; i < len(comando); i++ {
+			Rep(comando[i], &rep)
+		}
+		if rep.Path != "" && rep.Name != "" && rep.Identificador != "" {
+			Metodos.Rep(rep, disco)
+		} else {
+			fmt.Println("Error: Hace falta uno de los siguientes atributos obligatorios path, name o identificador")
+		}
+	case "":
 	default:
 		fmt.Println("Comando no reconocido")
 	}
@@ -252,92 +270,55 @@ func Mount(linea string, montar *Structs.Montar) {
 	}
 }
 
-func Unmount(linea string) {
+func Unmount(linea string, umount *Structs.UnMount) {
 	comando := strings.Split(linea, "->")
 	ejecutar := comando[0]
-	valor := comando[1]
 	if strings.Contains(strings.ToLower(ejecutar), strings.ToLower("-id")) {
-		numero := strings.Split(strings.ToLower(ejecutar), strings.ToLower("-id"))
-		var s string = numero[1]
-		i, err := strconv.ParseInt(s, 10, 64)
-		if err == nil {
-			fmt.Println("Atributo IDn: " + ejecutar)
-			fmt.Println("la n en IDn: ", i)
-			fmt.Println("Valor Atributo: ", valor)
-		} else {
-			fmt.Println("Error: Se esperaba valor numerico")
-		}
+		r, _ := regexp.Compile("^[vV][dD][a-zA-ZñÑ][0-9]+$")
+		fmt.Println(r.FindString(comando[1]))
+		umount.Identificador = r.FindString(comando[1])
 	} else {
 		fmt.Println("Error: Este atributo " + ejecutar + " no existe en el comando unmount")
 	}
 }
 
-func Rep() {
-
-}
-
-func Mbr() {
-
-}
-
-func Disk() {
-
+func Rep(linea string, rep *Structs.Rep) {
+	comando := strings.Split(linea, "->")
+	switch ejecutar := comando[0]; strings.ToLower(ejecutar) {
+	case strings.ToLower("-path"):
+		fmt.Println("Atributo Path: " + ejecutar)
+		fmt.Println("Valor Atributo: " + strings.ReplaceAll(comando[1], "\u0022", ""))
+		rep.Path = comando[1]
+	case strings.ToLower("-name"):
+		fmt.Println("Atributo Name: " + ejecutar)
+		fmt.Println("Valor Atributo: " + strings.ReplaceAll(comando[1], "\u0022", ""))
+		rep.Name = comando[1]
+	case strings.ToLower("-id"):
+		r, _ := regexp.Compile("^[vV][dD][a-zA-ZñÑ][0-9]+$")
+		fmt.Println(r.FindString(comando[1]))
+		rep.Identificador = r.FindString(comando[1])
+	default:
+		fmt.Println("Error: Este atributo " + ejecutar + " no existe en el comando Rep")
+	}
 }
 
 func comentario(linea string) string {
-	estado := 0
-	comando := ""
-	cadenita := ""
-	caracter := ""
-	for i := 0; i < len(linea); i++ {
-		caracter = string(linea[i])
-		if estado == 0 {
-			if caracter == "#" {
-				estado = 1
-			} else {
-				comando += caracter
-			}
-		} else if estado == 1 {
-			cadenita += caracter
-		}
+	r, _ := regexp.Compile("#.*")
+	if r.MatchString(linea) {
+		fmt.Println("COMENTARIO: ", r.FindString(linea))
 	}
-	fmt.Println("COMENTARIO: ", cadenita)
-	fmt.Println(comando)
-	return comando
+	r = regexp.MustCompile("#.*")
+	return r.ReplaceAllString(linea, "")
 }
 
 func ruta(linea string) string {
-	estado := 0
-	comando := ""
-	cadenita := ""
-	caracter := ""
-	for i := 0; i < len(linea); i++ {
-		caracter = string(linea[i])
-		if estado == 0 {
-			if caracter == "\"" {
-				cadenita += caracter
-				estado = 1
-			} else {
-				comando += caracter
-			}
-		} else if estado == 1 {
-			if caracter != "\"" {
-				if caracter == " " {
-					caracter = "_"
-				}
-				cadenita += caracter
-			} else {
-				cadenita += caracter
-				estado = 0
-				comando += cadenita
-			}
-		}
+	r, _ := regexp.Compile("\"[^\"]*\"")
+	if r.MatchString(linea) {
+		nuevo := strings.ReplaceAll(r.FindString(linea), " ", "_")
+		r = regexp.MustCompile("\"[^\"]*\"")
+		linea = r.ReplaceAllString(linea, nuevo)
 	}
-	if estado == 0 {
-		return comando
-	} else {
-		return linea
-	}
+	return linea
 }
 
 func archivo(path string, disco *[27]Structs.Disco) {
@@ -363,7 +344,7 @@ func mostrar(disco *[27]Structs.Disco) {
 			fmt.Println(disco[i].Path)
 			for j := 0; j < len(disco[i].Particiones); j++ {
 				if disco[i].Particiones[j].Status == 1 {
-					fmt.Println(i+1, ". Id: ", disco[i].Particiones[j].Identificador)
+					fmt.Println(j+1, ". Id: ", disco[i].Particiones[j].Identificador, ". Name: ", disco[i].Particiones[j].Name)
 				}
 			}
 		}

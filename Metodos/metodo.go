@@ -8,7 +8,9 @@ import (
 	"log"
 	"math/rand"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -182,6 +184,30 @@ func Montar(mount Structs.Montar, disco *[27]Structs.Disco) {
 	}
 }
 
+func Desmontar(id string, disco *[27]Structs.Disco) bool {
+	letra := strings.ReplaceAll(id, "vd", "")
+	r, _ := regexp.Compile("[0-9]+")
+	if r.MatchString(letra) {
+		r = regexp.MustCompile("[0-9]+")
+		letra = r.ReplaceAllString(letra, "")
+	}
+	for i := 0; i < len(disco); i++ {
+		if letra == disco[i].Letra {
+			for j := 0; j < len(disco[i].Particiones); j++ {
+				if id == disco[i].Particiones[j].Identificador && disco[i].Particiones[j].Status == 1 {
+					disco[i].Particiones[j] = Structs.ParticionMontada{}
+					fmt.Println("Se ha desmontado correctamente la particion")
+					return true
+				}
+			}
+			fmt.Println("No existe el identificador")
+			return false
+		}
+	}
+	fmt.Println("No existe el identificador")
+	return false
+}
+
 func agregarMount(mount Structs.Montar, disco *[27]Structs.Disco) {
 	for i := 0; i < len(disco); i++ {
 		if mount.Path == disco[i].Path {
@@ -202,9 +228,10 @@ func agregarMount(mount Structs.Montar, disco *[27]Structs.Disco) {
 
 func agregarPath(mount Structs.Montar, disco *[27]Structs.Disco) {
 	for i := 0; i < len(disco); i++ {
-		if disco[i].Path == mount.Path {
+		if disco[i].Path == mount.Path && mount.Name != "" {
 			break
 		} else if disco[i].Status == 0 {
+			disco[i].Letra = letra(i)
 			disco[i].Path = mount.Path
 			disco[i].Status = 1
 			break
@@ -397,6 +424,12 @@ func espacioEntreParticiones(part1 Structs.Partition, part2 Structs.Partition, s
 	return dif >= size
 }
 
+func libre(part1 Structs.Partition, part2 Structs.Partition) int64 {
+	dif := part2.Start - (part1.Start + part1.Size)
+	//sfmt.Println("La difrenecia es de: ", dif, " espacio a meter: ", size)
+	return dif
+}
+
 func definirUnidad(unidad string) int64 {
 	var size int64
 	if strings.ToLower(unidad) == "b" {
@@ -466,6 +499,145 @@ func ensureDir(fileName string) {
 			panic(merr)
 		}
 	}
+}
+
+func Rep(rep Structs.Rep, disco *[27]Structs.Disco) {
+	ruta := existe(rep, disco)
+	if ruta != "" {
+		ensureDir(rep.Path)
+		dot := ""
+		if strings.ToLower(rep.Name) == "mbr" {
+			dot = graficarMBR(ruta)
+			ruta = strings.Split(rep.Path, ".")[0] + ".dot"
+
+			ext := strings.Split(rep.Path, ".")[1]
+
+			file, err := os.Create(ruta)
+			if err != nil {
+				fmt.Println("No se pudo crear el archivo")
+			} else {
+				fmt.Fprintln(file, dot)
+			}
+			file.Close()
+			arch := strings.Split(rep.Path, "/")
+			tipo := strings.Split(rep.Path, "/")
+			ruta = ""
+			for i := 0; i < len(tipo)-1; i++ {
+
+				ruta = ruta + tipo[i] + "/"
+
+			}
+
+			aux := strings.Split(arch[len(arch)-1], ".")[0] + ".dot"
+
+			out, err := exec.Command("dot", "-T"+ext, ruta+aux, "-o", rep.Path).Output()
+			if err != nil {
+				log.Fatal(err)
+				os.Exit(1)
+			}
+
+			fmt.Println(string(out))
+			fmt.Println("Se creo exitosamente el reporte")
+
+		} else if strings.ToLower(rep.Name) == "disk" {
+
+		}
+
+	}
+}
+
+func graficarMBR(ruta string) string {
+	linea := ""
+
+	file, err := os.Open(ruta)
+	defer file.Close()
+	if err != nil {
+		fmt.Println("No se encontro el disco")
+	} else {
+		mbr := Structs.MBR{}
+		var size int = int(unsafe.Sizeof(mbr))
+		mbr = readDisk(file, size, mbr)
+		linea = linea + "digraph G {\n node [shape=record];\n"
+		linea = linea + "mbr[label=\"MBR"
+
+		for i := 0; i < len(mbr.Partition)-1; i++ {
+			if size == int(mbr.Partition[i].Start) && mbr.Partition[i].Status == 0 {
+				linea = linea + "|Libre"
+			}
+			if mbr.Partition[i].Status != 0 {
+
+				if strings.ToLower(string(mbr.Partition[i].Type)) == "p" || strings.ToLower(string(mbr.Partition[i].Type)) == "l" {
+					linea = linea + "|Primaria"
+				} else {
+
+					linea = linea + "|{Extendida|{EBR|Libre}}"
+				}
+
+				if espacioEntreParticiones(mbr.Partition[i], mbr.Partition[i+1], 1) {
+
+					linea = linea + "|Libre"
+				}
+				size = int(mbr.Partition[i].Start + mbr.Partition[i].Size)
+			}
+		}
+
+		if mbr.Partition[3].Status != 0 {
+			if strings.ToLower(string(mbr.Partition[3].Type)) == "p" || strings.ToLower(string(mbr.Partition[3].Type)) == "l" {
+				linea = linea + "|Primaria"
+			} else {
+
+				linea = linea + "|{Extendida|{EBR|Libre}}"
+			}
+		}
+		aux := int(mbr.Size) - size
+
+		if aux > 0 {
+			linea = linea + "|Libre "
+		}
+
+		linea = linea + "\"] }"
+
+	}
+
+	return linea
+}
+
+func graficarDisk(ruta string) string {
+	linea := ""
+
+	file, err := os.Open(ruta)
+	defer file.Close()
+	if err != nil {
+		fmt.Println("No se encontro el disco")
+	} else {
+		mbr := Structs.MBR{}
+		var size int = int(unsafe.Sizeof(mbr))
+		mbr = readDisk(file, size, mbr)
+	}
+
+	return linea
+}
+
+func existe(rep Structs.Rep, disco *[27]Structs.Disco) string {
+	letra := strings.ReplaceAll(rep.Identificador, "vd", "")
+	r, _ := regexp.Compile("[0-9]+")
+	if r.MatchString(letra) {
+		r = regexp.MustCompile("[0-9]+")
+		letra = r.ReplaceAllString(letra, "")
+	}
+	for i := 0; i < len(disco); i++ {
+		if letra == disco[i].Letra {
+			for j := 0; j < len(disco[i].Particiones); j++ {
+				if rep.Identificador == disco[i].Particiones[j].Identificador && disco[i].Particiones[j].Status == 1 {
+					return disco[i].Path
+				}
+			}
+			fmt.Println("No existe el identificador")
+			return ""
+		}
+	}
+	fmt.Println("No existe el identificador")
+	return ""
 }
 
 func letra(i int) string {
