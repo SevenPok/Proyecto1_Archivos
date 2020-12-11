@@ -73,9 +73,8 @@ func CreateFile(mkdisk Structs.Mkdisk) {
 			t.Hour(), t.Minute(), t.Second())
 		cadenita := fecha
 		copy(disco.Date[:], cadenita)
-		rand.Seed(time.Now().UnixNano())
 
-		disco.Signature = int64(rand.Intn(10001))
+		disco.Signature = int64(randomNum())
 		s1 := &disco
 
 		var binario3 bytes.Buffer
@@ -88,6 +87,13 @@ func CreateFile(mkdisk Structs.Mkdisk) {
 
 		}
 	}
+}
+
+func randomNum() int {
+	//semilla a nivel nanosegundo en unix time
+	rand.Seed(time.Now().UTC().UnixNano())
+
+	return rand.Intn(1000) // valor entre 0 - 1000
 }
 
 func DeleteDisk(path string, disco *[27]Structs.Disco) {
@@ -144,7 +150,7 @@ func CreatePartition(fdisk Structs.Fdisk) {
 			partition.Size = fdisk.Add * definirUnidad(string(fdisk.Unit))
 			mbr = add(mbr, partition)
 		} else if fdisk.Delete != "" && fdisk.Add == 0 && validarNombre(mbr, string(partition.Name[:])) {
-
+			mbr = deletePartition(mbr, partition)
 		} else if !validarNombre(mbr, string(partition.Name[:])) && soloUnaParticionExtendida(mbr, partition) && validacion(mbr, partition, fdisk) {
 			mbr = ajuste(mbr, partition)
 		} else {
@@ -159,6 +165,19 @@ func CreatePartition(fdisk Structs.Fdisk) {
 	}
 }
 
+func deletePartition(mbr Structs.MBR, partition Structs.Partition) Structs.MBR {
+	for i := 0; i < len(mbr.Partition); i++ {
+		if mbr.Partition[i].Name == partition.Name {
+			mbr.Partition[i] = Structs.Partition{}
+			mbr.Partition[i].Start = 0
+			mbr.Partition[i].Status = 0
+			mbr = ordenarParticiones(mbr)
+			fmt.Println("Se ha eliminado la particion correctamente")
+		}
+	}
+	return mbr
+}
+
 func Montar(mount Structs.Montar, disco *[27]Structs.Disco) {
 	file, err := os.OpenFile(mount.Path, os.O_RDWR, 0777)
 	defer file.Close()
@@ -171,6 +190,7 @@ func Montar(mount Structs.Montar, disco *[27]Structs.Disco) {
 
 		partition := Structs.Partition{}
 		copy(partition.Name[:], mount.Name)
+
 		agregarPath(mount, disco)
 		for i := 0; i < len(mbr.Partition); i++ {
 			if partition.Name == mbr.Partition[i].Name {
@@ -239,31 +259,129 @@ func agregarPath(mount Structs.Montar, disco *[27]Structs.Disco) {
 	}
 }
 
+func estaMontada(mount Structs.Montar, disco *[27]Structs.Disco) bool {
+	for i := 0; i < len(disco); i++ {
+		if disco[i].Status != 0 {
+			for j := 0; j < len(disco[i].Particiones); j++ {
+				if disco[i].Particiones[j].Status != 0 {
+					if disco[i].Particiones[j].Name == mount.Name {
+						return true
+					}
+				}
+			}
+		}
+	}
+	return false
+}
+
 func ajuste(mbr Structs.MBR, partition Structs.Partition) Structs.MBR {
 	if strings.ToLower(string(partition.Fit)) == "b" {
-		return firstFit(mbr, partition)
+		return bestFit(mbr, partition)
 	} else if strings.ToLower(string(partition.Fit)) == "f" {
 		return firstFit(mbr, partition)
 	} else {
-		return firstFit(mbr, partition)
+		return worstFit(mbr, partition)
 	}
 }
 
 func bestFit(mbr Structs.MBR, partition Structs.Partition) Structs.MBR {
+	var start int64 = int64(unsafe.Sizeof(mbr))
+	var best int64 = 100000000
 
+	if mbr.Partition[0].Status == 0 {
+		return firstFit(mbr, partition)
+	} else if mbr.Partition[0].Start-start < best {
+		partition.Start = start
+	}
+
+	for i := 0; i < len(mbr.Partition); i++ {
+		if mbr.Partition[i].Status == 1 && i < 3 {
+			size := libre(mbr.Partition[i], mbr.Partition[i+1])
+			if size < best {
+				partition.Start = start + mbr.Partition[i].Size
+				best = size
+			}
+			start = mbr.Partition[i].Start + mbr.Partition[i].Size
+		} else {
+			libre := mbr.Size - start - partition.Size
+			if libre < best && libre >= 0 {
+				partition.Start = start + mbr.Partition[i].Size
+				best = libre
+			}
+			break
+		}
+	}
+
+	if best != 100000000 {
+		if strings.ToLower(string(partition.Type)) == "e" {
+			partition.Ebr.Start = partition.Start
+		}
+		mbr = insert(mbr, partition)
+		fmt.Println("Se creo la particion exitosamente!!!!!")
+		mbr = ordenarParticiones(mbr)
+	} else {
+		fmt.Println("No hay espacio suficiente para la particion")
+	}
 	return mbr
 }
 
 func worstFit(mbr Structs.MBR, partition Structs.Partition) Structs.MBR {
+	var start int64 = int64(unsafe.Sizeof(mbr))
+	var worst int64 = -1
 
+	if mbr.Partition[0].Status == 0 {
+		return firstFit(mbr, partition)
+	} else if mbr.Partition[0].Start-start > worst {
+		partition.Start = start
+	}
+
+	for i := 0; i < len(mbr.Partition); i++ {
+		if mbr.Partition[i].Status == 1 && i < 3 {
+			size := libre(mbr.Partition[i], mbr.Partition[i+1])
+			if size > worst {
+				partition.Start = start + mbr.Partition[i].Size
+				worst = size
+			}
+			start = mbr.Partition[i].Start + mbr.Partition[i].Size
+		} else {
+			if mbr.Size-start > partition.Size && mbr.Size-start > worst {
+				partition.Start = start + mbr.Partition[i].Size
+				worst = mbr.Size - start
+			}
+			break
+		}
+	}
+
+	if worst != -1 {
+		if strings.ToLower(string(partition.Type)) == "e" {
+			partition.Ebr.Start = start
+		}
+		mbr = insert(mbr, partition)
+		fmt.Println("Se creo la particion exitosamente!!!!!")
+		mbr = ordenarParticiones(mbr)
+	} else {
+		fmt.Println("No hay espacio suficiente para la particion")
+	}
 	return mbr
 }
 
 func firstFit(mbr Structs.MBR, partition Structs.Partition) Structs.MBR {
 	var size int64 = int64(unsafe.Sizeof(mbr))
+	num := mbr.Partition[0].Start - size
+	if num >= partition.Size {
+		partition.Start = size
+		if strings.ToLower(string(partition.Type)) == "e" {
+			partition.Ebr.Start = size
+		}
+		mbr = insert(mbr, partition)
+		fmt.Println("Se creo la particion exitosamente!!!!!")
+		mbr = ordenarParticiones(mbr)
+		return mbr
+	}
+
 	for i := 0; i < len(mbr.Partition)-1; i++ {
 		if mbr.Partition[i].Status == 0 {
-			if mbr.Partition[i+1].Status == 0 {
+			if mbr.Partition[i+1].Status == 0 && mbr.Size-size > partition.Size {
 				partition.Start = size
 				if strings.ToLower(string(partition.Type)) == "e" {
 					partition.Ebr.Start = size
@@ -296,6 +414,15 @@ func firstFit(mbr Structs.MBR, partition Structs.Partition) Structs.MBR {
 		fmt.Println("No hay espacio suficiente para la particion")
 	}
 	return mbr
+}
+
+func hayParticion(mbr Structs.MBR) bool {
+	for i := 0; i < len(mbr.Partition); i++ {
+		if mbr.Partition[i].Status == 1 {
+			return true
+		}
+	}
+	return false
 }
 
 func insert(mbr Structs.MBR, partition Structs.Partition) Structs.MBR {
@@ -408,7 +535,11 @@ func soloUnaParticionExtendida(mbr Structs.MBR, partition Structs.Partition) boo
 func ordenarParticiones(mbr Structs.MBR) Structs.MBR {
 	for i := 0; i < len(mbr.Partition)-1; i++ {
 		for j := 0; j < len(mbr.Partition)-1; j++ {
-			if mbr.Partition[j].Start > mbr.Partition[j+1].Start {
+			if mbr.Partition[j].Start > mbr.Partition[j+1].Start && mbr.Partition[j].Start != 0 && mbr.Partition[j+1].Start != 0 {
+				aux := mbr.Partition[j+1]
+				mbr.Partition[j+1] = mbr.Partition[j]
+				mbr.Partition[j] = aux
+			} else if mbr.Partition[j].Start == 0 {
 				aux := mbr.Partition[j+1]
 				mbr.Partition[j+1] = mbr.Partition[j]
 				mbr.Partition[j] = aux
@@ -506,7 +637,7 @@ func Rep(rep Structs.Rep, disco *[27]Structs.Disco) {
 	if ruta != "" {
 		ensureDir(rep.Path)
 		dot := ""
-		if strings.ToLower(rep.Name) == "mbr" {
+		if strings.ToLower(rep.Name) == "disk" {
 			dot = graficarMBR(ruta)
 			ruta = strings.Split(rep.Path, ".")[0] + ".dot"
 
@@ -539,8 +670,24 @@ func Rep(rep Structs.Rep, disco *[27]Structs.Disco) {
 			fmt.Println(string(out))
 			fmt.Println("Se creo exitosamente el reporte")
 
-		} else if strings.ToLower(rep.Name) == "disk" {
+		} else if strings.ToLower(rep.Name) == "mbr" {
+			dot = graficarDisk(ruta)
+			file, err := os.Create(strings.Split(rep.Path, ".")[0] + ".dot")
+			if err != nil {
+				fmt.Println("No se pudo crear el archivo")
+			} else {
+				fmt.Fprintln(file, dot)
+			}
 
+			out, err := exec.Command("dot", "-T"+strings.Split(rep.Path, ".")[1], strings.Split(rep.Path, ".")[0]+".dot", "-o", rep.Path).Output()
+			if err != nil {
+				log.Fatal(err)
+				os.Exit(1)
+			}
+
+			fmt.Println(string(out))
+			fmt.Println("Se creo exitosamente el reporte")
+			file.Close()
 		}
 
 	}
@@ -562,12 +709,12 @@ func graficarMBR(ruta string) string {
 
 		for i := 0; i < len(mbr.Partition)-1; i++ {
 			if size == int(mbr.Partition[i].Start) && mbr.Partition[i].Status == 0 {
-				linea = linea + "|Libre"
+				linea = linea + "|Libre "
 			}
 			if mbr.Partition[i].Status != 0 {
 
 				if strings.ToLower(string(mbr.Partition[i].Type)) == "p" || strings.ToLower(string(mbr.Partition[i].Type)) == "l" {
-					linea = linea + "|Primaria"
+					linea = linea + "|Primaria " + porcentaje(mbr.Size, mbr.Partition[i])
 				} else {
 
 					linea = linea + "|{Extendida|{EBR|Libre}}"
@@ -575,7 +722,7 @@ func graficarMBR(ruta string) string {
 
 				if espacioEntreParticiones(mbr.Partition[i], mbr.Partition[i+1], 1) {
 
-					linea = linea + "|Libre"
+					linea = linea + "|Libre " + strconv.Itoa(int(libre(mbr.Partition[i], mbr.Partition[i+1]))*100/int(mbr.Size)) + "%"
 				}
 				size = int(mbr.Partition[i].Start + mbr.Partition[i].Size)
 			}
@@ -583,7 +730,7 @@ func graficarMBR(ruta string) string {
 
 		if mbr.Partition[3].Status != 0 {
 			if strings.ToLower(string(mbr.Partition[3].Type)) == "p" || strings.ToLower(string(mbr.Partition[3].Type)) == "l" {
-				linea = linea + "|Primaria"
+				linea = linea + "|Primaria " + porcentaje(mbr.Size, mbr.Partition[3])
 			} else {
 
 				linea = linea + "|{Extendida|{EBR|Libre}}"
@@ -592,7 +739,7 @@ func graficarMBR(ruta string) string {
 		aux := int(mbr.Size) - size
 
 		if aux > 0 {
-			linea = linea + "|Libre "
+			linea = linea + "|Libre " + strconv.Itoa(aux*100/int(mbr.Size)) + "%"
 		}
 
 		linea = linea + "\"] }"
@@ -600,6 +747,11 @@ func graficarMBR(ruta string) string {
 	}
 
 	return linea
+}
+
+func porcentaje(size int64, partition Structs.Partition) string {
+	porcent := int((partition.Size * 100) / size)
+	return strconv.Itoa(porcent) + "%"
 }
 
 func graficarDisk(ruta string) string {
@@ -613,9 +765,42 @@ func graficarDisk(ruta string) string {
 		mbr := Structs.MBR{}
 		var size int = int(unsafe.Sizeof(mbr))
 		mbr = readDisk(file, size, mbr)
+		name := strings.Split(ruta, "/")
+		linea = linea + "digraph G {\n	graph[label= \"Reporte MBR\"];\n	node [shape=plain];\n	randir = TB;\n"
+		linea = linea + "	mbr[label=<\n"
+		linea = linea + "		<table border=\"1\" cellborder=\"1\" cellspacing=\"0\">\n"
+		linea = linea + "			<tr> <td colspan='2'>" + name[len(name)-1] + "</td> </tr>\n"
+		linea = linea + "			<tr> <td> mbr_size</td> <td> " + strconv.Itoa(size) + "</td> </tr>\n"
+		linea = linea + "			<tr> <td> mbr_fecha_creacion</td> <td> " + funcion(mbr.Date[:]) + "</td> </tr>\n"
+		linea = linea + "			<tr> <td> mbr_disk_signature</td> <td> " + strconv.Itoa(int(mbr.Signature)) + "</td> </tr>\n"
+		num := 1
+		for i := 0; i < len(mbr.Partition); i++ {
+			if mbr.Partition[i].Status == 1 {
+				linea = linea + "			<tr> <td> part_status_" + strconv.Itoa(num) + "</td> <td> 1 </td> </tr>\n"
+				linea = linea + "			<tr> <td> part_type_" + strconv.Itoa(num) + "</td> <td> " + string(mbr.Partition[i].Type) + "</td> </tr>\n"
+				linea = linea + "			<tr> <td> part_fit_" + strconv.Itoa(num) + "</td> <td> " + string(mbr.Partition[i].Fit) + "</td> </tr>\n"
+				linea = linea + "			<tr> <td> part_start_" + strconv.Itoa(num) + "</td> <td> " + strconv.Itoa(int(mbr.Partition[i].Start)) + "</td> </tr>\n"
+				linea = linea + "			<tr> <td> part_size_" + strconv.Itoa(num) + "</td> <td> " + strconv.Itoa(int(mbr.Partition[i].Size)) + "</td> </tr>\n"
+				linea = linea + "			<tr> <td> part_name_" + strconv.Itoa(num) + "</td> <td> " + funcion(mbr.Partition[i].Name[:]) + "</td> </tr>\n"
+				num++
+			}
+		}
+		linea = linea + "		</table>\n"
+		linea = linea + "	>];\n"
+		linea = linea + "}"
 	}
 
 	return linea
+}
+
+func funcion(name []byte) string {
+	data := ""
+	for i := 0; i < len(name); i++ {
+		if name[i] != 0 {
+			data += string(name[i])
+		}
+	}
+	return data
 }
 
 func existe(rep Structs.Rep, disco *[27]Structs.Disco) string {

@@ -87,16 +87,20 @@ func Interpreter(linea string, disco *[27]Structs.Disco) {
 			if fdisk.Unit == 0 {
 				fdisk.Unit = 'k'
 			}
-
-			if fdisk.Add != 0 && fdisk.Delete == "" {
-				Metodos.CreatePartition(fdisk)
-			} else if fdisk.Add == 0 && fdisk.Delete != "" {
-				//Metodos.CreatePartition(fdisk)
-			} else if fdisk.Add == 0 && fdisk.Delete == "" {
-				Metodos.CreatePartition(fdisk)
+			if strings.ToLower(string(fdisk.Type)) != "l" {
+				if fdisk.Add != 0 && fdisk.Delete == "" {
+					Metodos.CreatePartition(fdisk)
+				} else if fdisk.Add == 0 && fdisk.Delete != "" {
+					Metodos.CreatePartition(fdisk)
+				} else if fdisk.Add == 0 && fdisk.Delete == "" && (strings.ToLower(string(fdisk.Fit)) == "b" || strings.ToLower(string(fdisk.Fit)) == "f" || strings.ToLower(string(fdisk.Fit)) == "w") {
+					Metodos.CreatePartition(fdisk)
+				} else {
+					fmt.Println("Error: no se puede ejucutar add y delete al mismo tiempo")
+				}
 			} else {
-				fmt.Println("Error: no se puede ejucutar add y delete al mismo tiempo")
+				fmt.Println("No se peude hacer particiones logicas")
 			}
+
 		} else {
 			fmt.Println("Error: Hace falta uno de los siguientes atributos obligatorios path, name o size")
 		}
@@ -136,7 +140,9 @@ func Interpreter(linea string, disco *[27]Structs.Disco) {
 		fmt.Println("Comando REP")
 		rep := Structs.Rep{}
 		for i := 1; i < len(comando); i++ {
-			Rep(comando[i], &rep)
+			if comando[i] != "" {
+				Rep(comando[i], &rep)
+			}
 		}
 		if rep.Path != "" && rep.Name != "" && rep.Identificador != "" {
 			Metodos.Rep(rep, disco)
@@ -148,8 +154,8 @@ func Interpreter(linea string, disco *[27]Structs.Disco) {
 		fmt.Println("Comando no reconocido")
 	}
 	fmt.Println("-----------------------------------------")
-	mostrar(disco)
-	fmt.Println("-----------------------------------------")
+	/* mostrar(disco)
+	fmt.Println("-----------------------------------------") */
 }
 
 func Exec(linea string) string {
@@ -349,4 +355,15 @@ func mostrar(disco *[27]Structs.Disco) {
 			}
 		}
 	}
+}
+
+func validarFit(fit string) string {
+	if strings.ToLower(fit) == "bf" {
+		return "b"
+	} else if strings.ToLower(fit) == "ff" {
+		return "f"
+	} else if strings.ToLower(fit) == "wf" {
+		return "w"
+	}
+	return ""
 }
